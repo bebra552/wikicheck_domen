@@ -25,7 +25,7 @@ jobs:
     
     - name: Build Windows executable
       run: |
-        pyinstaller --onefile --windowed --hidden-import=tkinter --hidden-import=tkinter.ttk --hidden-import=tkinter.filedialog --hidden-import=tkinter.messagebox --hidden-import=tkinter.scrolledtext --hidden-import=requests --hidden-import=bs4 --hidden-import=csv --hidden-import=datetime --name wikicheck-windows main.py
+        pyinstaller --onefile --windowed --hidden-import=tkinter --hidden-import=tkinter.ttk --hidden-import=tkinter.filedialog --hidden-import=tkinter.messagebox --hidden-import=tkinter.scrolledtext --hidden-import=requests --hidden-import=bs4 --hidden-import=csv --hidden-import=datetime --hidden-import=socket --hidden-import=whois --hidden-import=re --hidden-import=urllib.parse --name wikicheck-windows main.py
     
     - name: Upload Windows artifact
       uses: actions/upload-artifact@v4
@@ -61,6 +61,10 @@ jobs:
           --hidden-import=bs4 \
           --hidden-import=csv \
           --hidden-import=datetime \
+          --hidden-import=socket \
+          --hidden-import=whois \
+          --hidden-import=re \
+          --hidden-import=urllib.parse \
           --name wikicheck-macos \
           main.py
     
