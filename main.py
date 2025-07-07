@@ -13,6 +13,8 @@ import re
 from urllib.parse import urlparse
 import subprocess
 import sys
+import openpyxl
+from openpyxl import Workbook
 
 class WikiCheckApp:
     def __init__(self, root):
@@ -25,6 +27,7 @@ class WikiCheckApp:
             "User-Agent": "Mozilla/5.0 (compatible; DropDomainBot/1.0; +mailto:veprik8900@mail.ru)"
         }
         
+        self.output_path = ""
         self.setup_ui()
         
     def setup_ui(self):
@@ -43,31 +46,43 @@ class WikiCheckApp:
         ttk.Entry(main_frame, textvariable=self.file_path, width=50).grid(row=1, column=1, padx=5, pady=5)
         ttk.Button(main_frame, text="Выбрать", command=self.select_file).grid(row=1, column=2, pady=5)
         
+        # Выбор пути сохранения
+        ttk.Label(main_frame, text="Путь сохранения:").grid(row=2, column=0, sticky=tk.W, pady=5)
+        self.output_path_var = tk.StringVar()
+        ttk.Entry(main_frame, textvariable=self.output_path_var, width=50).grid(row=2, column=1, padx=5, pady=5)
+        ttk.Button(main_frame, text="Выбрать", command=self.select_output_path).grid(row=2, column=2, pady=5)
+        
+        # Выбор формата
+        ttk.Label(main_frame, text="Формат:").grid(row=3, column=0, sticky=tk.W, pady=5)
+        self.format_var = tk.StringVar(value="Excel")
+        format_combo = ttk.Combobox(main_frame, textvariable=self.format_var, values=["Excel", "CSV"], state="readonly")
+        format_combo.grid(row=3, column=1, sticky=tk.W, padx=5, pady=5)
+        
         # Кнопка запуска
         self.start_button = ttk.Button(main_frame, text="Начать проверку", command=self.start_check)
-        self.start_button.grid(row=2, column=0, columnspan=3, pady=10)
+        self.start_button.grid(row=4, column=0, columnspan=3, pady=10)
         
         # Прогресс бар
         self.progress = ttk.Progressbar(main_frame, mode='determinate')
-        self.progress.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=5)
+        self.progress.grid(row=5, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=5)
         
         # Статус
         self.status_label = ttk.Label(main_frame, text="Готов к работе")
-        self.status_label.grid(row=4, column=0, columnspan=3, pady=5)
+        self.status_label.grid(row=6, column=0, columnspan=3, pady=5)
         
         # Логи
-        ttk.Label(main_frame, text="Логи:").grid(row=5, column=0, sticky=tk.W, pady=(10, 0))
-        self.log_text = scrolledtext.ScrolledText(main_frame, width=80, height=15)
-        self.log_text.grid(row=6, column=0, columnspan=3, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
+        ttk.Label(main_frame, text="Логи:").grid(row=7, column=0, sticky=tk.W, pady=(10, 0))
+        self.log_text = scrolledtext.ScrolledText(main_frame, width=80, height=12)
+        self.log_text.grid(row=8, column=0, columnspan=3, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
         
         # Кнопка связи
-        contact_button = ttk.Button(main_frame, text="📞 Связаться", 
+        contact_button = ttk.Button(main_frame, text="Связаться", 
                                    command=self.open_contact)
-        contact_button.grid(row=7, column=0, columnspan=3, pady=10)
+        contact_button.grid(row=9, column=0, columnspan=3, pady=10)
         
         # Настройка растягивания
         main_frame.columnconfigure(1, weight=1)
-        main_frame.rowconfigure(6, weight=1)
+        main_frame.rowconfigure(8, weight=1)
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
         
@@ -78,6 +93,11 @@ class WikiCheckApp:
         )
         if file_path:
             self.file_path.set(file_path)
+            
+    def select_output_path(self):
+        path = filedialog.askdirectory(title="Выберите папку для сохранения")
+        if path:
+            self.output_path_var.set(path)
             
     def open_contact(self):
         webbrowser.open("https://t.me/Userspoi")
@@ -128,7 +148,8 @@ class WikiCheckApp:
             if sys.platform == "win32":
                 # Для Windows используем nslookup как альтернативу
                 result = subprocess.run(['nslookup', domain], 
-                                      capture_output=True, text=True, timeout=10)
+                                      capture_output=True, text=True, timeout=10,
+                                      creationflags=subprocess.CREATE_NO_WINDOW)
                 if result.returncode == 0 and result.stdout:
                     return {'status': 'Active', 'method': 'DNS lookup'}
             else:
@@ -198,22 +219,39 @@ class WikiCheckApp:
         """
         Полная обработка домена с проверками
         """
-        results = []
+        # Базовая информация о домене
+        domain_data = {
+            'domain': domain,
+            'date': datetime.now().strftime('%Y-%m-%d'),
+            'valid_format': False,
+            'dns_exists': False,
+            'website_status': None,
+            'whois_available': False,
+            'wikipedia_links': [],
+            'flags': []
+        }
         
         # 1. Валидация домена
         if not self.validate_domain(domain):
             self.log(f"    ❌ Некорректный формат домена: {domain}")
-            return results
+            domain_data['flags'].append("Некорректный формат")
+            return domain_data
+        
+        domain_data['valid_format'] = True
         
         # 2. Проверка существования
         if not self.check_domain_exists(domain):
             self.log(f"    ❌ Домен не найден в DNS: {domain}")
-            return results
+            domain_data['flags'].append("Не найден в DNS")
+            return domain_data
         
+        domain_data['dns_exists'] = True
         self.log(f"    ✅ Домен найден в DNS")
         
         # 3. Проверка доступности сайта
         website_status = self.check_website_status(domain)
+        domain_data['website_status'] = website_status
+        
         if website_status:
             self.log(f"    ✅ Сайт доступен (HTTP {website_status})")
         else:
@@ -224,6 +262,7 @@ class WikiCheckApp:
         domain_info = self.get_whois_info(domain)
         
         if domain_info:
+            domain_data['whois_available'] = True
             self.log(f"    ✅ WHOIS данные получены")
             if domain_info.get('has_registrar'):
                 self.log(f"    🏢 Регистратор найден")
@@ -232,28 +271,131 @@ class WikiCheckApp:
         
         # 5. Анализ красных флагов
         flags = self.analyze_domain_flags(domain_info, website_status)
+        domain_data['flags'].extend(flags)
+        
         if flags:
             self.log(f"    🚩 Красные флаги: {', '.join(flags)}")
         
         # 6. Поиск ссылок в Wikipedia
         self.log(f"    🔍 Поиск ссылок в Wikipedia...")
         links = self.search_wikipedia_links(domain)
+        domain_data['wikipedia_links'] = links
         
-        for url, anchor in links:
-            # Информация для CSV
-            row = [
-                domain,
-                datetime.now().strftime('%Y-%m-%d'),
-                url,
-                anchor,
-                'Доступно' if domain_info else 'Недоступно',
-                website_status if website_status else 'N/A',
-                '; '.join(flags) if flags else 'Нет'
-            ]
-            results.append(row)
-            self.log(f"    ✅ Найдена ссылка: {url}")
+        if links:
+            for url, anchor in links:
+                self.log(f"    ✅ Найдена ссылка: {url}")
+        else:
+            self.log(f"    ❌ Ссылок не найдено")
         
-        return results
+        return domain_data
+    
+    def save_results(self, all_results):
+        """
+        Сохранение результатов в выбранном формате
+        """
+        if not self.output_path_var.get():
+            output_dir = os.path.dirname(os.path.abspath(__file__))
+        else:
+            output_dir = self.output_path_var.get()
+        
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        
+        if self.format_var.get() == "Excel":
+            filename = f"wikipedia_check_{timestamp}.xlsx"
+            filepath = os.path.join(output_dir, filename)
+            self.save_to_excel(all_results, filepath)
+        else:
+            filename = f"wikipedia_check_{timestamp}.csv"
+            filepath = os.path.join(output_dir, filename)
+            self.save_to_csv(all_results, filepath)
+        
+        return filepath
+    
+    def save_to_excel(self, all_results, filepath):
+        """
+        Сохранение в Excel
+        """
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Wikipedia Check Results"
+        
+        # Заголовки
+        headers = [
+            'Домен', 'Дата проверки', 'Валидный формат', 'DNS существует', 
+            'HTTP статус', 'WHOIS доступен', 'Количество Wiki-ссылок', 
+            'Wiki-ссылки', 'Тексты ссылок', 'Красные флаги'
+        ]
+        
+        for col, header in enumerate(headers, 1):
+            ws.cell(row=1, column=col, value=header)
+        
+        # Данные
+        row = 2
+        for domain_data in all_results:
+            ws.cell(row=row, column=1, value=domain_data['domain'])
+            ws.cell(row=row, column=2, value=domain_data['date'])
+            ws.cell(row=row, column=3, value='Да' if domain_data['valid_format'] else 'Нет')
+            ws.cell(row=row, column=4, value='Да' if domain_data['dns_exists'] else 'Нет')
+            ws.cell(row=row, column=5, value=domain_data['website_status'] if domain_data['website_status'] else 'N/A')
+            ws.cell(row=row, column=6, value='Да' if domain_data['whois_available'] else 'Нет')
+            ws.cell(row=row, column=7, value=len(domain_data['wikipedia_links']))
+            
+            # Ссылки и тексты
+            if domain_data['wikipedia_links']:
+                urls = [link[0] for link in domain_data['wikipedia_links']]
+                texts = [link[1] for link in domain_data['wikipedia_links']]
+                ws.cell(row=row, column=8, value='\n'.join(urls))
+                ws.cell(row=row, column=9, value='\n'.join(texts))
+            else:
+                ws.cell(row=row, column=8, value='Нет')
+                ws.cell(row=row, column=9, value='Нет')
+            
+            ws.cell(row=row, column=10, value='; '.join(domain_data['flags']) if domain_data['flags'] else 'Нет')
+            row += 1
+        
+        # Автоподбор ширины столбцов
+        for column in ws.columns:
+            max_length = 0
+            column_letter = column[0].column_letter
+            for cell in column:
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
+                except:
+                    pass
+            adjusted_width = min(max_length + 2, 50)
+            ws.column_dimensions[column_letter].width = adjusted_width
+        
+        wb.save(filepath)
+    
+    def save_to_csv(self, all_results, filepath):
+        """
+        Сохранение в CSV
+        """
+        with open(filepath, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                'Домен', 'Дата проверки', 'Валидный формат', 'DNS существует', 
+                'HTTP статус', 'WHOIS доступен', 'Количество Wiki-ссылок', 
+                'Wiki-ссылки', 'Тексты ссылок', 'Красные флаги'
+            ])
+            
+            for domain_data in all_results:
+                urls = '|'.join([link[0] for link in domain_data['wikipedia_links']]) if domain_data['wikipedia_links'] else 'Нет'
+                texts = '|'.join([link[1] for link in domain_data['wikipedia_links']]) if domain_data['wikipedia_links'] else 'Нет'
+                
+                writer.writerow([
+                    domain_data['domain'],
+                    domain_data['date'],
+                    'Да' if domain_data['valid_format'] else 'Нет',
+                    'Да' if domain_data['dns_exists'] else 'Нет',
+                    domain_data['website_status'] if domain_data['website_status'] else 'N/A',
+                    'Да' if domain_data['whois_available'] else 'Нет',
+                    len(domain_data['wikipedia_links']),
+                    urls,
+                    texts,
+                    '; '.join(domain_data['flags']) if domain_data['flags'] else 'Нет'
+                ])
     
     def start_check(self):
         if not self.file_path.get():
@@ -287,18 +429,19 @@ class WikiCheckApp:
             self.progress.config(maximum=len(domains))
             self.progress.config(value=0)
             
-            results = []
+            all_results = []
+            wiki_links_found = 0
             
             for i, domain in enumerate(domains, 1):
                 self.status_label.config(text=f"Проверяю: {domain} ({i}/{len(domains)})")
                 self.log(f"[{i}/{len(domains)}] Проверяю: {domain}")
                 
-                # Используем новый метод полной обработки
-                domain_results = self.process_domain(domain)
-                results.extend(domain_results)
+                # Обработка домена
+                domain_data = self.process_domain(domain)
+                all_results.append(domain_data)
                 
-                if not domain_results:
-                    self.log(f"    ❌ Ссылок не найдено")
+                if domain_data['wikipedia_links']:
+                    wiki_links_found += len(domain_data['wikipedia_links'])
                 
                 # Обновляем прогресс
                 self.progress.config(value=i)
@@ -306,30 +449,14 @@ class WikiCheckApp:
                 
                 time.sleep(2)  # пауза между запросами
             
-            # Сохраняем результаты
-            if results:
-                output_file = 'wikipedia_backlinks_extended.csv'
-                with open(output_file, 'w', newline='', encoding='utf-8') as f:
-                    writer = csv.writer(f)
-                    writer.writerow([
-                        'Домен', 
-                        'Дата', 
-                        'Wiki-ссылка', 
-                        'Текст ссылки',
-                        'WHOIS статус',
-                        'HTTP статус',
-                        'Красные флаги'
-                    ])
-                    writer.writerows(results)
-                
-                self.log(f"\n✅ Найдено: {len(results)} доменов со ссылками")
-                self.log(f"Результаты сохранены в {output_file}")
-                self.status_label.config(text=f"Готово! Найдено {len(results)} ссылок")
-                messagebox.showinfo("Готово", f"Найдено {len(results)} ссылок с Wikipedia.\nРезультаты сохранены в {output_file}")
-            else:
-                self.log("\n❌ Ссылок с Wikipedia не найдено")
-                self.status_label.config(text="Готово! Ссылок не найдено")
-                messagebox.showinfo("Готово", "Ссылок с Wikipedia не найдено")
+            # Сохраняем все результаты
+            output_file = self.save_results(all_results)
+            
+            self.log(f"\n✅ Проверено доменов: {len(all_results)}")
+            self.log(f"✅ Найдено ссылок с Wikipedia: {wiki_links_found}")
+            self.log(f"Результаты сохранены в {output_file}")
+            self.status_label.config(text=f"Готово! Проверено {len(all_results)} доменов")
+            messagebox.showinfo("Готово", f"Проверено {len(all_results)} доменов.\nНайдено {wiki_links_found} ссылок с Wikipedia.\nРезультаты сохранены в {os.path.basename(output_file)}")
                 
         except Exception as e:
             self.log(f"❌ Общая ошибка: {e}")
