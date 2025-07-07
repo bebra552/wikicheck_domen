@@ -9,9 +9,10 @@ import webbrowser
 import threading
 import os
 import socket
-import whois
 import re
 from urllib.parse import urlparse
+import subprocess
+import sys
 
 class WikiCheckApp:
     def __init__(self, root):
@@ -60,7 +61,7 @@ class WikiCheckApp:
         self.log_text.grid(row=6, column=0, columnspan=3, pady=5, sticky=(tk.W, tk.E, tk.N, tk.S))
         
         # Кнопка связи
-        contact_button = ttk.Button(main_frame, text="📞 Связаться с автором", 
+        contact_button = ttk.Button(main_frame, text="📞 Связаться", 
                                    command=self.open_contact)
         contact_button.grid(row=7, column=0, columnspan=3, pady=10)
         
@@ -121,51 +122,42 @@ class WikiCheckApp:
     
     def get_whois_info(self, domain):
         """
-        Получение WHOIS информации
+        Получение WHOIS информации через системную команду
         """
         try:
-            w = whois.whois(domain)
-            info = {
-                'domain_name': getattr(w, 'domain_name', 'N/A'),
-                'creation_date': getattr(w, 'creation_date', 'N/A'),
-                'expiration_date': getattr(w, 'expiration_date', 'N/A'),
-                'updated_date': getattr(w, 'updated_date', 'N/A'),
-                'registrar': getattr(w, 'registrar', 'N/A'),
-                'registrant_name': getattr(w, 'name', 'N/A'),
-                'registrant_org': getattr(w, 'org', 'N/A'),
-                'registrant_country': getattr(w, 'country', 'N/A'),
-                'registrant_email': getattr(w, 'email', 'N/A'),
-                'status': getattr(w, 'status', 'N/A')
-            }
-            return info
+            if sys.platform == "win32":
+                # Для Windows используем nslookup как альтернативу
+                result = subprocess.run(['nslookup', domain], 
+                                      capture_output=True, text=True, timeout=10)
+                if result.returncode == 0 and result.stdout:
+                    return {'status': 'Active', 'method': 'DNS lookup'}
+            else:
+                # Для Unix/Linux используем системную команду whois
+                result = subprocess.run(['whois', domain], 
+                                      capture_output=True, text=True, timeout=10)
+                if result.returncode == 0 and result.stdout:
+                    # Простой парсинг основных данных
+                    output = result.stdout.lower()
+                    info = {'status': 'Active', 'method': 'System whois'}
+                    
+                    # Попытка извлечь основную информацию
+                    if 'creation date' in output or 'created' in output:
+                        info['has_creation_date'] = True
+                    if 'registrar' in output:
+                        info['has_registrar'] = True
+                    
+                    return info
+            
+            return None
         except Exception as e:
-            self.log(f"    ❌ Ошибка WHOIS для {domain}: {e}")
+            self.log(f"    ⚠️ WHOIS недоступен для {domain}: {e}")
             return None
     
-    def calculate_domain_age(self, creation_date):
-        """
-        Вычисление возраста домена
-        """
-        try:
-            if isinstance(creation_date, list):
-                creation_date = creation_date[0]
-            if isinstance(creation_date, datetime):
-                age = datetime.now() - creation_date
-                return age.days
-            return None
-        except:
-            return None
-    
-    def analyze_domain_flags(self, domain_info, domain_age, website_status):
+    def analyze_domain_flags(self, domain_info, website_status):
         """
         Анализ красных флагов домена
         """
         flags = []
-        
-        # Проверка возраста
-        if domain_age is not None:
-            if domain_age < 180:  # младше 6 месяцев
-                flags.append("Молодой домен")
         
         # Проверка доступности
         if website_status is None:
@@ -174,15 +166,8 @@ class WikiCheckApp:
             flags.append(f"HTTP ошибка {website_status}")
         
         # Проверка WHOIS данных
-        if domain_info:
-            if domain_info.get('registrant_name') == 'N/A':
-                flags.append("Скрытые данные владельца")
-            
-            # Проверка регистратора
-            registrar = domain_info.get('registrar', '')
-            if isinstance(registrar, str) and any(word in registrar.lower() for word in ['namecheap', 'godaddy']):
-                # Это нормальные регистраторы, не флаг
-                pass
+        if not domain_info:
+            flags.append("WHOIS недоступен")
         
         return flags
     
@@ -239,38 +224,29 @@ class WikiCheckApp:
         domain_info = self.get_whois_info(domain)
         
         if domain_info:
-            # Вычисление возраста домена
-            domain_age = self.calculate_domain_age(domain_info.get('creation_date'))
-            if domain_age:
-                self.log(f"    📅 Возраст домена: {domain_age} дней ({domain_age//365} лет)")
-            
-            # Информация о владельце
-            if domain_info.get('registrant_name') != 'N/A':
-                self.log(f"    👤 Владелец: {domain_info.get('registrant_name')}")
-            if domain_info.get('registrant_country') != 'N/A':
-                self.log(f"    🌍 Страна: {domain_info.get('registrant_country')}")
-            if domain_info.get('registrar') != 'N/A':
-                self.log(f"    🏢 Регистратор: {domain_info.get('registrar')}")
-            
-            # Анализ красных флагов
-            flags = self.analyze_domain_flags(domain_info, domain_age, website_status)
-            if flags:
-                self.log(f"    🚩 Красные флаги: {', '.join(flags)}")
+            self.log(f"    ✅ WHOIS данные получены")
+            if domain_info.get('has_registrar'):
+                self.log(f"    🏢 Регистратор найден")
+        else:
+            self.log(f"    ⚠️ WHOIS данные недоступны")
         
-        # 5. Поиск ссылок в Wikipedia
+        # 5. Анализ красных флагов
+        flags = self.analyze_domain_flags(domain_info, website_status)
+        if flags:
+            self.log(f"    🚩 Красные флаги: {', '.join(flags)}")
+        
+        # 6. Поиск ссылок в Wikipedia
         self.log(f"    🔍 Поиск ссылок в Wikipedia...")
         links = self.search_wikipedia_links(domain)
         
         for url, anchor in links:
-            # Расширенная информация для CSV
+            # Информация для CSV
             row = [
                 domain,
                 datetime.now().strftime('%Y-%m-%d'),
                 url,
                 anchor,
-                domain_age if domain_age else 'N/A',
-                domain_info.get('registrant_country', 'N/A') if domain_info else 'N/A',
-                domain_info.get('registrar', 'N/A') if domain_info else 'N/A',
+                'Доступно' if domain_info else 'Недоступно',
                 website_status if website_status else 'N/A',
                 '; '.join(flags) if flags else 'Нет'
             ]
@@ -328,9 +304,9 @@ class WikiCheckApp:
                 self.progress.config(value=i)
                 self.root.update()
                 
-                time.sleep(2)  # увеличиваем паузу из-за WHOIS запросов
+                time.sleep(2)  # пауза между запросами
             
-            # Сохраняем результаты с расширенными данными
+            # Сохраняем результаты
             if results:
                 output_file = 'wikipedia_backlinks_extended.csv'
                 with open(output_file, 'w', newline='', encoding='utf-8') as f:
@@ -340,9 +316,7 @@ class WikiCheckApp:
                         'Дата', 
                         'Wiki-ссылка', 
                         'Текст ссылки',
-                        'Возраст домена (дни)',
-                        'Страна владельца',
-                        'Регистратор',
+                        'WHOIS статус',
                         'HTTP статус',
                         'Красные флаги'
                     ])
